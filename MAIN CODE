@@ -1,240 +1,290 @@
-import pygame
-import random
-import math
-
+import pygame, random, math
 pygame.init()
-screen = pygame.display.set_mode((2560 , 1440))
+
+# ---------------- FULLSCREEN ----------------
+info = pygame.display.Info()
+WIDTH, HEIGHT = info.current_w, info.current_h
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+
 clock = pygame.time.Clock()
+font = pygame.font.SysFont(None, 36)
 
 # ---------------- GAME STATE ----------------
 game_state = {
     "time": 0,
-    "next_enemy_spawn": 0,
     "next_level_up": 60,
-    "available_enemies": ["basic"],
     "enemies": [],
-    "level": 0
+    "weapons": [],
+    "bullets": [],
+    "effects": [],
+    "enemy_types": ["basic"]
 }
 
+MAX_ENEMIES = 25
+
+# ---------------- PLAYER ----------------
 player = {
-    "x": 400,
-    "y": 300,
+    "x": WIDTH//2,
+    "y": HEIGHT//2,
     "hp": 5,
     "max_hp": 5,
-    "speed": 200,
+    "speed": 300,
     "damage": 1,
-    "orbit_level": 0,
-    "blades": [],
-    "blade_cooldown": 0
+    "weapon": None,
+    "last_shot": 0,
 }
 
-# ---------------- ENEMY SYSTEM ----------------
-def get_enemy_stats(enemy_type):
-    return {
-        "basic": {"hp": 2, "speed": 80},
-        "fast": {"hp": 1, "speed": 120},
-        "tank": {"hp": 4, "speed": 70},
-        "flying": {"hp": 1, "speed": 100},
-        "snake": {"hp": 5, "speed": 110}
-    }[enemy_type]
+WEAPON_TYPES = ["pistol","shotgun","smg","wand","melee"]
 
-def spawn_enemy():
-    enemy_type = random.choice(game_state["available_enemies"])
-    stats = get_enemy_stats(enemy_type)
+# ---------------- TIMER ----------------
+def update_time(dt):
+    game_state["time"] = min(600, game_state["time"] + dt)
 
-    enemy = {
-        "type": enemy_type,
-        "hp": stats["hp"],
-        "speed": stats["speed"],
-        "rect": pygame.Rect(random.randint(0, 800), random.randint(0, 600), 25, 25)
-    }
-
-    game_state["enemies"].append(enemy)
-
-def handle_enemy_spawning():
-    if game_state["time"] >= game_state["next_enemy_spawn"]:
-        spawn_enemy()
-        delay = max(0.3, 1.0 - game_state["time"] / 600)
-        game_state["next_enemy_spawn"] += delay
-
-def unlock_enemy_types():
+# ---------------- ENEMY PROGRESSION ----------------
+def update_enemy_types():
     t = game_state["time"]
 
-    if t >= 90 and "fast" not in game_state["available_enemies"]:
-        game_state["available_enemies"].append("fast")
-    elif t >= 180 and "tank" not in game_state["available_enemies"]:
-        game_state["available_enemies"].append("tank")
-    elif t >= 270 and "flying" not in game_state["available_enemies"]:
-        game_state["available_enemies"].append("flying")
-    elif t >= 480 and "snake" not in game_state["available_enemies"]:
-        game_state["available_enemies"].append("snake")
+    if t >= 90 and "fast" not in game_state["enemy_types"]:
+        game_state["enemy_types"].append("fast")
+
+    if t >= 180 and "tank" not in game_state["enemy_types"]:
+        game_state["enemy_types"].append("tank")
+
+    if t >= 270 and "flying" not in game_state["enemy_types"]:
+        game_state["enemy_types"].append("flying")
+
+    if t >= 480 and "snake" not in game_state["enemy_types"]:
+        game_state["enemy_types"].append("snake")
 
 # ---------------- PLAYER ----------------
 def move_player(dt):
     keys = pygame.key.get_pressed()
 
-    if keys[pygame.K_w]:
-        player["y"] -= player["speed"] * dt
-    if keys[pygame.K_s]:
-        player["y"] += player["speed"] * dt
-    if keys[pygame.K_a]:
-        player["x"] -= player["speed"] * dt
-    if keys[pygame.K_d]:
-        player["x"] += player["speed"] * dt
+    if keys[pygame.K_w]: player["y"] -= player["speed"] * dt
+    if keys[pygame.K_s]: player["y"] += player["speed"] * dt
+    if keys[pygame.K_a]: player["x"] -= player["speed"] * dt
+    if keys[pygame.K_d]: player["x"] += player["speed"] * dt
 
-# ---------------- LEVEL SYSTEM ----------------
-def level_up():
-    game_state["level"] += 1
+    player["x"] = max(0, min(WIDTH-20, player["x"]))
+    player["y"] = max(0, min(HEIGHT-20, player["y"]))
 
-    upgrades = ["damage", "speed", "max_hp", "orbit"]
-    choice = random.choice(upgrades)
-
-    apply_upgrade(choice)
-
-def apply_upgrade(upgrade):
-    t = game_state["time"]
-
-    if upgrade == "damage":
-        player["damage"] *= (1 + 0.1 * (1 + t / 600))
-
-    elif upgrade == "speed":
-        player["speed"] *= 1.1
-
-    elif upgrade == "max_hp":
-        player["max_hp"] += 1
-        player["hp"] += 1
-
-    elif upgrade == "orbit":
-        if player["orbit_level"] < 2:
-            player["orbit_level"] += 1
-        elif player["orbit_level"] == 2 and t >= 420:
-            player["orbit_level"] = 3
-
-# ---------------- BLADES (SHURIKEN SYSTEM) ----------------
-def spawn_blades():
-    player["blades"] = []
-
-    level = player["orbit_level"]
-    if level == 0:
+# ---------------- ENEMIES ----------------
+def spawn_enemy():
+    if len(game_state["enemies"]) >= MAX_ENEMIES:
         return
 
-    hit_limits = {1: 10, 2: 20, 3: 25}
-    hits = hit_limits[level]
+    t = random.choice(game_state["enemy_types"])
 
-    for i in range(level):
-        blade = {
-            "angle": (360 / level) * i,
-            "radius": 50,
-            "speed": 180,
-            "lifetime": 10.0,
-            "hits_left": hits
-        }
-        player["blades"].append(blade)
+    stats = {
+        "basic": (2, 100, 1),
+        "fast": (1, 160, 1),
+        "tank": (3, 80, 2),
+        "flying": (1, 120, 1),
+        "snake": (5, 140, 3)
+    }
 
-def update_blades(dt):
-    if player["orbit_level"] == 0:
-        return
+    hp, speed, dmg = stats[t]
 
-    if not player["blades"]:
-        player["blade_cooldown"] -= dt
-        if player["blade_cooldown"] <= 0:
-            spawn_blades()
-        return
+    game_state["enemies"].append({
+        "x": random.randint(0, WIDTH),
+        "y": random.randint(0, HEIGHT),
+        "hp": hp,
+        "speed": speed,
+        "dmg": dmg,
+        "type": t
+    })
 
-    new_blades = []
-
-    for blade in player["blades"]:
-        blade["angle"] += blade["speed"] * dt
-        blade["lifetime"] -= dt
-
-        rad = math.radians(blade["angle"])
-        bx = player["x"] + math.cos(rad) * blade["radius"]
-        by = player["y"] + math.sin(rad) * blade["radius"]
-
-        blade_rect = pygame.Rect(int(bx), int(by), 10, 10)
-
-        for enemy in game_state["enemies"]:
-            if blade_rect.colliderect(enemy["rect"]):
-                enemy["hp"] -= 1
-                blade["hits_left"] -= 1
-
-        if blade["hits_left"] > 0 and blade["lifetime"] > 0:
-            new_blades.append(blade)
-
-    player["blades"] = new_blades
-
-    if not player["blades"]:
-        player["blade_cooldown"] = 5.0
-
-def draw_blades():
-    for blade in player["blades"]:
-        rad = math.radians(blade["angle"])
-        bx = player["x"] + math.cos(rad) * blade["radius"]
-        by = player["y"] + math.sin(rad) * blade["radius"]
-
-        pygame.draw.circle(screen, (200, 200, 255), (int(bx), int(by)), 5)
-
-# ---------------- ENEMY UPDATE ----------------
 def update_enemies(dt):
-    for enemy in game_state["enemies"]:
-        dx = player["x"] - enemy["rect"].x
-        dy = player["y"] - enemy["rect"].y
-
-        dist = math.hypot(dx, dy)
+    for e in game_state["enemies"]:
+        dx = player["x"] - e["x"]
+        dy = player["y"] - e["y"]
+        dist = math.hypot(dx,dy)
         if dist != 0:
-            dx /= dist
-            dy /= dist
+            dx/=dist; dy/=dist
 
-        enemy["rect"].x += dx * enemy["speed"] * dt
-        enemy["rect"].y += dy * enemy["speed"] * dt
+        e["x"] += dx * e["speed"] * dt
+        e["y"] += dy * e["speed"] * dt
 
-        if enemy["rect"].colliderect(pygame.Rect(player["x"], player["y"], 20, 20)):
-            player["hp"] -= 1
+        if math.hypot(e["x"]-player["x"], e["y"]-player["y"]) < 20:
+            player["hp"] -= e["dmg"]
 
-    # remove dead enemies
     game_state["enemies"] = [e for e in game_state["enemies"] if e["hp"] > 0]
+
+# ---------------- WEAPONS ----------------
+def spawn_weapon():
+    game_state["weapons"].append({
+        "x": random.randint(50, WIDTH-50),
+        "y": random.randint(50, HEIGHT-50),
+        "type": random.choice(WEAPON_TYPES),
+        "lifetime": 10
+    })
+
+def update_weapons(dt):
+    for w in game_state["weapons"]:
+        w["lifetime"] -= dt
+
+        if math.hypot(player["x"]-w["x"], player["y"]-w["y"]) < 25:
+            player["weapon"] = w["type"]
+            w["lifetime"] = 0
+
+    game_state["weapons"] = [w for w in game_state["weapons"] if w["lifetime"] > 0]
+
+# ---------------- BULLETS ----------------
+def fire_bullet(angle, speed=600):
+    game_state["bullets"].append({
+        "x": player["x"],
+        "y": player["y"],
+        "dx": math.cos(angle),
+        "dy": math.sin(angle),
+        "speed": speed,
+        "life": 2
+    })
+
+def update_bullets(dt):
+    new = []
+    for b in game_state["bullets"]:
+        b["x"] += b["dx"] * b["speed"] * dt
+        b["y"] += b["dy"] * b["speed"] * dt
+        b["life"] -= dt
+
+        for e in game_state["enemies"]:
+            if math.hypot(b["x"]-e["x"], b["y"]-e["y"]) < 15:
+                e["hp"] -= player["damage"]
+                b["life"] = 0
+
+        if b["life"] > 0:
+            new.append(b)
+
+    game_state["bullets"] = new
+
+# ---------------- SHOOT ----------------
+def shoot(dt):
+    if not player["weapon"] or not game_state["enemies"]:
+        return
+
+    player["last_shot"] += dt
+
+    target = min(game_state["enemies"],
+                 key=lambda e: math.hypot(e["x"]-player["x"], e["y"]-player["y"]))
+
+    angle = math.atan2(target["y"]-player["y"], target["x"]-player["x"])
+
+    if player["weapon"] == "pistol" and player["last_shot"] > 0.4:
+        fire_bullet(angle)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "shotgun" and player["last_shot"] > 1:
+        for s in [-0.3, -0.15, 0, 0.15, 0.3]:
+            fire_bullet(angle + s)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "smg" and player["last_shot"] > 0.1:
+        fire_bullet(angle)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "wand" and player["last_shot"] > 1:
+        fire_bullet(angle, 400)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "melee" and player["last_shot"] > 0.8:
+        melee_attack()
+
+# ---------------- MELEE ----------------
+def melee_attack():
+    player["last_shot"] = 0
+    radius = 60
+
+    for e in game_state["enemies"]:
+        if math.hypot(player["x"]-e["x"], player["y"]-e["y"]) < radius:
+            e["hp"] -= 2
+
+    game_state["effects"].append({
+        "x": player["x"],
+        "y": player["y"],
+        "radius": 0,
+        "max": radius,
+        "life": 0.2
+    })
+
+def update_effects(dt):
+    new = []
+    for fx in game_state["effects"]:
+        fx["life"] -= dt
+        fx["radius"] += 800 * dt
+        if fx["life"] > 0:
+            new.append(fx)
+    game_state["effects"] = new
 
 # ---------------- DRAW ----------------
 def draw():
-    screen.fill((30, 30, 30))
+    screen.fill((30,30,30))
 
-    # player
-    pygame.draw.rect(screen, (0, 255, 0), (player["x"], player["y"], 20, 20))
+    pygame.draw.rect(screen,(0,255,0),(player["x"],player["y"],20,20))
 
-    # enemies
-    for enemy in game_state["enemies"]:
-        pygame.draw.rect(screen, (255, 0, 0), enemy["rect"])
+    for e in game_state["enemies"]:
+        color = (255,0,0)
+        if e["type"] == "tank": color = (200,100,100)
+        if e["type"] == "fast": color = (255,150,150)
+        if e["type"] == "snake": color = (255,50,50)
+        pygame.draw.rect(screen,color,(e["x"],e["y"],20,20))
 
-    draw_blades()
+    for b in game_state["bullets"]:
+        pygame.draw.circle(screen,(255,255,0),(int(b["x"]),int(b["y"])),4)
+
+    for fx in game_state["effects"]:
+        pygame.draw.circle(screen,(255,255,255),
+                           (int(fx["x"]),int(fx["y"])),
+                           int(fx["radius"]),5)
+
+    for w in game_state["weapons"]:
+        pygame.draw.circle(screen,(0,0,255),(int(w["x"]),int(w["y"])),10)
+
+    # HP bar
+    ratio = player["hp"]/player["max_hp"]
+    pygame.draw.rect(screen,(100,0,0),(20,HEIGHT-40,300,25))
+    pygame.draw.rect(screen,(0,255,0),(20,HEIGHT-40,300*ratio,25))
+
+    # timer
+    t = int(game_state["time"])
+    txt = font.render(f"{t//60:02}:{t%60:02}",True,(255,255,255))
+    screen.blit(txt,(20,20))
 
     pygame.display.flip()
 
 # ---------------- MAIN LOOP ----------------
 running = True
+spawn_timer = 0
+weapon_timer = 0
 
 while running:
-    dt = clock.tick(60) / 1000
-    game_state["time"] += dt
+    dt = clock.tick(60)/1000
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
+    update_time(dt)
+    update_enemy_types()
     move_player(dt)
-
-    handle_enemy_spawning()
-    unlock_enemy_types()
-
-    if game_state["time"] >= game_state["next_level_up"]:
-        level_up()
-        game_state["next_level_up"] += 60
-
-    update_blades(dt)
     update_enemies(dt)
+    update_weapons(dt)
+    update_bullets(dt)
+    update_effects(dt)
+    shoot(dt)
+
+    spawn_timer += dt
+    weapon_timer += dt
+
+    if spawn_timer > 0.5:
+        spawn_enemy()
+        spawn_timer = 0
+
+    if weapon_timer > 10:
+        spawn_weapon()
+        weapon_timer = 0
 
     draw()
 
-    # end condition
     if player["hp"] <= 0 or game_state["time"] >= 600:
         running = False
 
