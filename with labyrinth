@@ -1,0 +1,413 @@
+import pygame, random, math
+pygame.init()
+
+# ---------------- FULLSCREEN ----------------
+info = pygame.display.Info()
+WIDTH, HEIGHT = info.current_w, info.current_h
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+
+clock = pygame.time.Clock()
+font = pygame.font.SysFont(None, 36)
+
+# ---------------- LABYRINTH CONFIG ----------------
+CELL_SIZE = 120
+WALL_THICKNESS = 20
+
+def generate_labyrinth(width, height):
+    cols = width // CELL_SIZE
+    rows = height // CELL_SIZE
+    
+    # Initialize grid with all walls intact
+    grid = [[{"visited": False, "walls": {"N": True, "S": True, "E": True, "W": True}} 
+             for _ in range(rows)] for _ in range(cols)]
+
+    # Depth-First Search Maze Generation
+    stack = []
+    current = (0, 0)
+    grid[0][0]["visited"] = True
+
+    while True:
+        cx, cy = current
+        neighbors = []
+        
+        if cy > 0 and not grid[cx][cy-1]["visited"]: neighbors.append(("N", cx, cy-1))
+        if cy < rows - 1 and not grid[cx][cy+1]["visited"]: neighbors.append(("S", cx, cy+1))
+        if cx < cols - 1 and not grid[cx+1][cy]["visited"]: neighbors.append(("E", cx+1, cy))
+        if cx > 0 and not grid[cx-1][cy]["visited"]: neighbors.append(("W", cx-1, cy))
+
+        if neighbors:
+            direction, nx, ny = random.choice(neighbors)
+            stack.append(current)
+            
+            # Knock down walls between current and next
+            if direction == "N":
+                grid[cx][cy]["walls"]["N"] = False
+                grid[nx][ny]["walls"]["S"] = False
+            elif direction == "S":
+                grid[cx][cy]["walls"]["S"] = False
+                grid[nx][ny]["walls"]["N"] = False
+            elif direction == "E":
+                grid[cx][cy]["walls"]["E"] = False
+                grid[nx][ny]["walls"]["W"] = False
+            elif direction == "W":
+                grid[cx][cy]["walls"]["W"] = False
+                grid[nx][ny]["walls"]["E"] = False
+
+            current = (nx, ny)
+            grid[nx][ny]["visited"] = True
+        elif stack:
+            current = stack.pop()
+        else:
+            break
+
+    # Convert abstract grid walls into Pygame Rectangles for collision
+    wall_rects = []
+    for cx in range(cols):
+        for cy in range(rows):
+            x = cx * CELL_SIZE
+            y = cy * CELL_SIZE
+            walls = grid[cx][cy]["walls"]
+
+            if walls["N"]:
+                wall_rects.append(pygame.Rect(x, y, CELL_SIZE + WALL_THICKNESS, WALL_THICKNESS))
+            if walls["W"]:
+                wall_rects.append(pygame.Rect(x, y, WALL_THICKNESS, CELL_SIZE + WALL_THICKNESS))
+            if cx == cols - 1 and walls["E"]:
+                wall_rects.append(pygame.Rect(x + CELL_SIZE, y, WALL_THICKNESS, CELL_SIZE + WALL_THICKNESS))
+            if cy == rows - 1 and walls["S"]:
+                wall_rects.append(pygame.Rect(x, y + CELL_SIZE, CELL_SIZE + WALL_THICKNESS, WALL_THICKNESS))
+
+    return wall_rects, cols, rows
+
+# Generate maze and get grid bounds
+walls, GRID_COLS, GRID_ROWS = generate_labyrinth(WIDTH, HEIGHT)
+
+def get_safe_spawn():
+    """Returns an X, Y coordinate in the center of a random maze cell."""
+    cx = random.randint(0, GRID_COLS - 1)
+    cy = random.randint(0, GRID_ROWS - 1)
+    return cx * CELL_SIZE + CELL_SIZE // 2, cy * CELL_SIZE + CELL_SIZE // 2
+
+# ---------------- GAME STATE ----------------
+game_state = {
+    "time": 0,
+    "next_level_up": 60,
+    "enemies": [],
+    "weapons": [],
+    "bullets": [],
+    "effects": [],
+    "enemy_types": ["basic"]
+}
+
+MAX_ENEMIES = 25
+
+# ---------------- PLAYER ----------------
+player = {
+    "x": (GRID_COLS // 2) * CELL_SIZE + CELL_SIZE // 2, # Start safely in a middle cell
+    "y": (GRID_ROWS // 2) * CELL_SIZE + CELL_SIZE // 2,
+    "hp": 5,
+    "max_hp": 5,
+    "speed": 300,
+    "damage": 1,
+    "weapon": None,
+    "last_shot": 0,
+}
+
+WEAPON_TYPES = ["pistol","shotgun","smg","wand","melee"]
+
+# ---------------- TIMER ----------------
+def update_time(dt):
+    game_state["time"] = min(600, game_state["time"] + dt)
+
+# ---------------- ENEMY PROGRESSION ----------------
+def update_enemy_types():
+    t = game_state["time"]
+
+    if t >= 90 and "fast" not in game_state["enemy_types"]: game_state["enemy_types"].append("fast")
+    if t >= 180 and "tank" not in game_state["enemy_types"]: game_state["enemy_types"].append("tank")
+    if t >= 270 and "flying" not in game_state["enemy_types"]: game_state["enemy_types"].append("flying")
+    if t >= 480 and "snake" not in game_state["enemy_types"]: game_state["enemy_types"].append("snake")
+
+# ---------------- PLAYER MOVEMENT ----------------
+def move_player(dt):
+    keys = pygame.key.get_pressed()
+    
+    dx = 0
+    dy = 0
+    if keys[pygame.K_w]: dy -= player["speed"] * dt
+    if keys[pygame.K_s]: dy += player["speed"] * dt
+    if keys[pygame.K_a]: dx -= player["speed"] * dt
+    if keys[pygame.K_d]: dx += player["speed"] * dt
+
+    # X collision
+    player["x"] += dx
+    p_rect = pygame.Rect(player["x"], player["y"], 20, 20)
+    for wall in walls:
+        if p_rect.colliderect(wall):
+            if dx > 0: player["x"] = wall.left - 20
+            if dx < 0: player["x"] = wall.right
+
+    # Y collision
+    player["y"] += dy
+    p_rect = pygame.Rect(player["x"], player["y"], 20, 20)
+    for wall in walls:
+        if p_rect.colliderect(wall):
+            if dy > 0: player["y"] = wall.top - 20
+            if dy < 0: player["y"] = wall.bottom
+
+    player["x"] = max(0, min(WIDTH-20, player["x"]))
+    player["y"] = max(0, min(HEIGHT-20, player["y"]))
+
+# ---------------- ENEMIES ----------------
+def spawn_enemy():
+    if len(game_state["enemies"]) >= MAX_ENEMIES:
+        return
+
+    t = random.choice(game_state["enemy_types"])
+    stats = {
+        "basic": (2, 100, 1),
+        "fast": (1, 160, 1),
+        "tank": (3, 80, 2),
+        "flying": (1, 120, 1),
+        "snake": (5, 140, 3)
+    }
+    hp, speed, dmg = stats[t]
+    
+    ex, ey = get_safe_spawn()
+
+    game_state["enemies"].append({
+        "x": ex,
+        "y": ey,
+        "hp": hp,
+        "speed": speed,
+        "dmg": dmg,
+        "type": t
+    })
+
+def update_enemies(dt):
+    for e in game_state["enemies"]:
+        dx = player["x"] - e["x"]
+        dy = player["y"] - e["y"]
+        dist = math.hypot(dx,dy)
+        if dist != 0:
+            dx/=dist; dy/=dist
+
+        move_x = dx * e["speed"] * dt
+        move_y = dy * e["speed"] * dt
+
+        # X collision
+        e["x"] += move_x
+        e_rect = pygame.Rect(e["x"], e["y"], 20, 20)
+        for w in walls:
+            if e_rect.colliderect(w):
+                if move_x > 0: e["x"] = w.left - 20
+                if move_x < 0: e["x"] = w.right
+
+        # Y collision
+        e["y"] += move_y
+        e_rect = pygame.Rect(e["x"], e["y"], 20, 20)
+        for w in walls:
+            if e_rect.colliderect(w):
+                if move_y > 0: e["y"] = w.top - 20
+                if move_y < 0: e["y"] = w.bottom
+
+        # Attack player
+        if math.hypot(e["x"]-player["x"], e["y"]-player["y"]) < 20:
+            player["hp"] -= e["dmg"]
+
+    game_state["enemies"] = [e for e in game_state["enemies"] if e["hp"] > 0]
+
+# ---------------- WEAPONS ----------------
+def spawn_weapon():
+    wx, wy = get_safe_spawn()
+    game_state["weapons"].append({
+        "x": wx,
+        "y": wy,
+        "type": random.choice(WEAPON_TYPES),
+        "lifetime": 10
+    })
+
+def update_weapons(dt):
+    for w in game_state["weapons"]:
+        w["lifetime"] -= dt
+        if math.hypot(player["x"]-w["x"], player["y"]-w["y"]) < 25:
+            player["weapon"] = w["type"]
+            w["lifetime"] = 0
+    game_state["weapons"] = [w for w in game_state["weapons"] if w["lifetime"] > 0]
+
+# ---------------- BULLETS ----------------
+def fire_bullet(angle, speed=600):
+    game_state["bullets"].append({
+        "x": player["x"] + 10, # offset to start from center of player
+        "y": player["y"] + 10,
+        "dx": math.cos(angle),
+        "dy": math.sin(angle),
+        "speed": speed,
+        "life": 2
+    })
+
+def update_bullets(dt):
+    new = []
+    for b in game_state["bullets"]:
+        b["x"] += b["dx"] * b["speed"] * dt
+        b["y"] += b["dy"] * b["speed"] * dt
+        b["life"] -= dt
+
+        # Wall collision check
+        bullet_rect = pygame.Rect(int(b["x"]) - 4, int(b["y"]) - 4, 8, 8)
+        hit_wall = False
+        for w in walls:
+            if bullet_rect.colliderect(w):
+                hit_wall = True
+                break
+                
+        if hit_wall:
+            continue # destroy bullet
+
+        # Enemy collision check
+        for e in game_state["enemies"]:
+            if math.hypot(b["x"]-e["x"], b["y"]-e["y"]) < 15:
+                e["hp"] -= player["damage"]
+                b["life"] = 0
+
+        if b["life"] > 0:
+            new.append(b)
+
+    game_state["bullets"] = new
+
+# ---------------- SHOOT ----------------
+def shoot(dt):
+    if not player["weapon"] or not game_state["enemies"]:
+        return
+
+    player["last_shot"] += dt
+    target = min(game_state["enemies"], key=lambda e: math.hypot(e["x"]-player["x"], e["y"]-player["y"]))
+    angle = math.atan2(target["y"]-player["y"], target["x"]-player["x"])
+
+    if player["weapon"] == "pistol" and player["last_shot"] > 0.4:
+        fire_bullet(angle)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "shotgun" and player["last_shot"] > 1:
+        for s in [-0.3, -0.15, 0, 0.15, 0.3]:
+            fire_bullet(angle + s)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "smg" and player["last_shot"] > 0.1:
+        fire_bullet(angle)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "wand" and player["last_shot"] > 1:
+        fire_bullet(angle, 400)
+        player["last_shot"] = 0
+
+    elif player["weapon"] == "melee" and player["last_shot"] > 0.8:
+        melee_attack()
+
+# ---------------- MELEE ----------------
+def melee_attack():
+    player["last_shot"] = 0
+    radius = 60
+
+    for e in game_state["enemies"]:
+        if math.hypot(player["x"]-e["x"], player["y"]-e["y"]) < radius:
+            e["hp"] -= 2
+
+    game_state["effects"].append({
+        "x": player["x"],
+        "y": player["y"],
+        "radius": 0,
+        "max": radius,
+        "life": 0.2
+    })
+
+def update_effects(dt):
+    new = []
+    for fx in game_state["effects"]:
+        fx["life"] -= dt
+        fx["radius"] += 800 * dt
+        if fx["life"] > 0:
+            new.append(fx)
+    game_state["effects"] = new
+
+# ---------------- DRAW ----------------
+def draw():
+    screen.fill((30,30,30))
+
+    # Draw labyrinth walls
+    for w in walls:
+        pygame.draw.rect(screen, (80, 80, 100), w)
+
+    pygame.draw.rect(screen,(0,255,0),(player["x"],player["y"],20,20))
+
+    for e in game_state["enemies"]:
+        color = (255,0,0)
+        if e["type"] == "tank": color = (200,100,100)
+        if e["type"] == "fast": color = (255,150,150)
+        if e["type"] == "snake": color = (255,50,50)
+        pygame.draw.rect(screen,color,(e["x"],e["y"],20,20))
+
+    for b in game_state["bullets"]:
+        pygame.draw.circle(screen,(255,255,0),(int(b["x"]),int(b["y"])),4)
+
+    for fx in game_state["effects"]:
+        pygame.draw.circle(screen,(255,255,255),
+                           (int(fx["x"]),int(fx["y"])),
+                           int(fx["radius"]),5)
+
+    for w in game_state["weapons"]:
+        pygame.draw.circle(screen,(0,0,255),(int(w["x"]),int(w["y"])),10)
+
+    # HP bar
+    ratio = player["hp"]/player["max_hp"]
+    pygame.draw.rect(screen,(100,0,0),(20,HEIGHT-40,300,25))
+    pygame.draw.rect(screen,(0,255,0),(20,HEIGHT-40,300*ratio,25))
+
+    # timer
+    t = int(game_state["time"])
+    txt = font.render(f"{t//60:02}:{t%60:02}",True,(255,255,255))
+    screen.blit(txt,(20,20))
+
+    pygame.display.flip()
+
+# ---------------- MAIN LOOP ----------------
+running = True
+spawn_timer = 0
+weapon_timer = 0
+
+while running:
+    dt = clock.tick(60)/1000
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                running = False
+
+    update_time(dt)
+    update_enemy_types()
+    move_player(dt)
+    update_enemies(dt)
+    update_weapons(dt)
+    update_bullets(dt)
+    update_effects(dt)
+    shoot(dt)
+
+    spawn_timer += dt
+    weapon_timer += dt
+
+    if spawn_timer > 0.5:
+        spawn_enemy()
+        spawn_timer = 0
+
+    if weapon_timer > 10:
+        spawn_weapon()
+        weapon_timer = 0
+
+    draw()
+
+    if player["hp"] <= 0 or game_state["time"] >= 600:
+        running = False
+
+pygame.quit()
