@@ -30,7 +30,8 @@ player = {
     "speed": 300,
     "weapon": None,
     "last_shot": 0,
-    "damage_cooldown": 0
+    "damage_cooldown": 0,
+    "wand_rotation": 0
 }
 
 # GAME STATE
@@ -45,7 +46,7 @@ game_state = {
     "enemy_types": ["basic"]
 }
 
-MAX_ENEMIES = 25
+MAX_ENEMIES = 50
 
 WEAPON_TYPES = [
     "pistol",
@@ -58,10 +59,9 @@ WEAPON_TYPES = [
 # LABYRINTH
 # 0 = floor
 # 1 = wall
-#
-# WRITE YOUR MAP HERE
-
 labyrinth = [
+
+    # PUT YOUR MAP HERE
 
 ]
 
@@ -238,7 +238,6 @@ def update_enemies(dt):
         new_x = e["x"] + dx * e["speed"] * dt
         new_y = e["y"] + dy * e["speed"] * dt
 
-        # Flying enemies ignore walls
         if e["type"] == "flying":
 
             e["x"] = new_x
@@ -252,7 +251,6 @@ def update_enemies(dt):
             if not wall_collision(e["x"], new_y):
                 e["y"] = new_y
 
-        # Damage player
         if math.hypot(
             e["x"] - player["x"],
             e["y"] - player["y"]
@@ -367,6 +365,7 @@ def fire_bullet(
         "size": size,
         "life": life
     })
+
 # UPDATE BULLETS
 
 def update_bullets(dt):
@@ -398,7 +397,6 @@ def update_bullets(dt):
             new_bullets.append(b)
 
     game_state["bullets"] = new_bullets
-
 # SHOOTING
 
 def shoot(dt):
@@ -431,24 +429,24 @@ def shoot(dt):
 
             fire_bullet(
                 angle,
-                speed=850,
+                speed=650,
                 damage=2,
-                pierce=1,
-                size=4
+                pierce=2,
+                size=3
             )
 
             fire_bullet(
                 angle - 0.08,
-                speed=800,
+                speed=600,
                 damage=1,
-                size=3
+                size=1
             )
 
             fire_bullet(
                 angle + 0.08,
-                speed=800,
+                speed=600,
                 damage=1,
-                size=3
+                size=1
             )
 
             player["last_shot"] = 0
@@ -456,7 +454,7 @@ def shoot(dt):
     # SHOTGUN
     elif player["weapon"] == "shotgun":
 
-        if player["last_shot"] > 0.75:
+        if player["last_shot"] > 1:
 
             for spread in [-0.3,-0.15,0,0.15,0.3]:
 
@@ -488,53 +486,78 @@ def shoot(dt):
 
             player["last_shot"] = 0
 
-    # WAND
-    elif player["weapon"] == "wand":
-
-        if player["last_shot"] > 0.75:
-
-            fire_bullet(
-                angle,
-                speed=420,
-                damage=2,
-                pierce=5,
-                color=(150,100,255),
-                size=15,
-                life=2
-            )
-
-            player["last_shot"] = 0
-
     # MELEE
     elif player["weapon"] == "melee":
 
         if player["last_shot"] > 0.8:
             melee_attack()
-=
+
+# WAND ORBITALS
+
+def update_wand(dt):
+
+    if player["weapon"] != "wand":
+        return
+
+    player["wand_rotation"] += 15 * dt
+
+    blade_count = 5
+    radius = 60
+
+    for i in range(blade_count):
+
+        angle = (
+            player["wand_rotation"]
+            + (math.pi * 2 / blade_count) * i
+        )
+
+        bx = player["x"] + math.cos(angle) * radius
+        by = player["y"] + math.sin(angle) * radius
+
+        for e in game_state["enemies"]:
+
+            if math.hypot(
+                bx - e["x"],
+                by - e["y"]
+            ) < 25:
+
+                e["hp"] -= 0.30
+
+        game_state["effects"].append({
+            "type": "wand",
+            "x": bx,
+            "y": by,
+            "life": 0.02
+        })
+
 # MELEE
 
 def melee_attack():
 
     player["last_shot"] = 0
 
-    radius = 80
+    damage_radius = 180
 
     for e in game_state["enemies"]:
 
         if math.hypot(
             player["x"] - e["x"],
             player["y"] - e["y"]
-        ) < radius:
+        ) < damage_radius:
 
             e["hp"] -= 2
 
     game_state["effects"].append({
         "x": player["x"],
         "y": player["y"],
-        "radius": radius,
+        "radius": 60,
+        "max_radius": damage_radius,
         "life": 0.2
     })
+
+# =========================================================
 # EFFECTS
+# =========================================================
 
 def update_effects(dt):
 
@@ -543,6 +566,12 @@ def update_effects(dt):
     for fx in game_state["effects"]:
 
         fx["life"] -= dt
+
+        if fx.get("type") != "wand":
+
+            fx["radius"] += (
+                fx["max_radius"] * 8
+            ) * dt
 
         if fx["life"] > 0:
             new_effects.append(fx)
@@ -578,22 +607,20 @@ def draw_hp_bar():
         (130, HEIGHT - 42)
     )
 
+# DRAW EVERYTHING
 
 def draw():
 
     screen.fill((30,30,30))
 
-    # Draw labyrinth
     draw_labyrinth()
 
-    # Player
     pygame.draw.rect(
         screen,
         (0,255,0),
         (player["x"], player["y"], 20, 20)
     )
 
-    # Enemies
     for e in game_state["enemies"]:
 
         color = (255,0,0)
@@ -616,7 +643,6 @@ def draw():
             (e["x"], e["y"], 20, 20)
         )
 
-    # Bullets
     for b in game_state["bullets"]:
 
         pygame.draw.circle(
@@ -626,18 +652,27 @@ def draw():
             b["size"]
         )
 
-    # Effects
     for fx in game_state["effects"]:
 
-        pygame.draw.circle(
-            screen,
-            (255,255,255),
-            (int(fx["x"]), int(fx["y"])),
-            int(fx["radius"]),
-            5
-        )
+        if fx.get("type") == "wand":
 
-    # Weapons
+            pygame.draw.circle(
+                screen,
+                (180,100,255),
+                (int(fx["x"]), int(fx["y"])),
+                14
+            )
+
+        else:
+
+            pygame.draw.circle(
+                screen,
+                (255,255,255),
+                (int(fx["x"]), int(fx["y"])),
+                int(fx["radius"]),
+                5
+            )
+
     for w in game_state["weapons"]:
 
         pygame.draw.circle(
@@ -647,7 +682,6 @@ def draw():
             10
         )
 
-    # Heals
     for h in game_state["heals"]:
 
         pygame.draw.circle(
@@ -659,7 +693,6 @@ def draw():
 
     draw_hp_bar()
 
-    # Timer
     t = int(game_state["time"])
 
     timer_text = font.render(
@@ -670,7 +703,6 @@ def draw():
 
     screen.blit(timer_text, (20,20))
 
-    # Weapon text
     weapon_name = (
         player["weapon"]
         if player["weapon"]
@@ -686,6 +718,7 @@ def draw():
     screen.blit(weapon_text, (20,60))
 
     pygame.display.flip()
+# MAIN LOOP
 
 running = True
 
@@ -707,7 +740,6 @@ while running:
             if event.key == pygame.K_ESCAPE:
                 running = False
 
-    # Damage cooldown
     if player["damage_cooldown"] > 0:
         player["damage_cooldown"] -= dt
 
@@ -727,9 +759,10 @@ while running:
 
     update_effects(dt)
 
+    update_wand(dt)
+
     shoot(dt)
 
-    # Enemy spawning
     spawn_timer += dt
 
     if spawn_timer > 0.5:
@@ -738,7 +771,6 @@ while running:
 
         spawn_timer = 0
 
-    # Weapon spawning
     weapon_timer += dt
 
     if weapon_timer > 10:
@@ -747,7 +779,6 @@ while running:
 
         weapon_timer = 0
 
-    # Heal spawning
     heal_timer += dt
 
     if heal_timer > 35:
@@ -758,11 +789,9 @@ while running:
 
     draw()
 
-    # Lose
     if player["hp"] <= 0:
         running = False
 
-    # Win
     if game_state["time"] >= 600:
         running = False
 
