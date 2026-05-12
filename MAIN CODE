@@ -45,11 +45,21 @@ def update_enemy_types():
 
     t = game_state["time"]
 
+    # 1:30
     if t >= 90 and "fast" not in game_state["enemy_types"]:
         game_state["enemy_types"].append("fast")
 
+    # 3:00
     if t >= 180 and "tank" not in game_state["enemy_types"]:
         game_state["enemy_types"].append("tank")
+
+    # 5:00
+    if t >= 300 and "flying" not in game_state["enemy_types"]:
+        game_state["enemy_types"].append("flying")
+
+    # 8:00
+    if t >= 480 and "snake" not in game_state["enemy_types"]:
+        game_state["enemy_types"].append("snake")
 
 # ---------------- PLAYER MOVEMENT ----------------
 def move_player(dt):
@@ -80,9 +90,11 @@ def spawn_enemy():
     enemy_type = random.choice(game_state["enemy_types"])
 
     stats = {
-        "basic": (2, 100, 1),
-        "fast": (1, 160, 1),
-        "tank": (3, 80, 2)
+        "basic":  (2, 100, 1),
+        "fast":   (1, 160, 1),
+        "tank":   (3, 80, 2),
+        "flying": (1, 140, 1),
+        "snake":  (5, 130, 3)
     }
 
     hp, speed, dmg = stats[enemy_type]
@@ -291,7 +303,6 @@ def shoot(dt):
 
         if player["last_shot"] > 0.25:
 
-            # Main shot
             fire_bullet(
                 angle,
                 speed=850,
@@ -302,7 +313,6 @@ def shoot(dt):
                 life=1.2
             )
 
-            # Small side bullets
             fire_bullet(
                 angle - 0.08,
                 speed=800,
@@ -404,7 +414,7 @@ def melee_attack():
     game_state["effects"].append({
         "x": player["x"],
         "y": player["y"],
-        "radius": 0,
+        "radius": radius,
         "max_radius": radius,
         "life": 0.2
     })
@@ -441,6 +451,17 @@ def draw_hp_bar():
         (20, HEIGHT - 40, 300 * ratio, 25)
     )
 
+    hp_text = font.render(
+        f"{player['hp']} / {player['max_hp']}",
+        True,
+        (255,255,255)
+    )
+
+    screen.blit(
+        hp_text,
+        (130, HEIGHT - 42)
+    )
+
 # ---------------- DRAW ----------------
 def draw():
 
@@ -463,6 +484,12 @@ def draw():
 
         elif e["type"] == "tank":
             color = (180,80,80)
+
+        elif e["type"] == "flying":
+            color = (100,220,255)
+
+        elif e["type"] == "snake":
+            color = (255,50,255)
 
         pygame.draw.rect(
             screen,
@@ -525,7 +552,7 @@ def draw():
 
     screen.blit(timer_text, (20,20))
 
-    # Weapon display
+    # Weapon text
     weapon_name = player["weapon"] if player["weapon"] else "None"
 
     weapon_text = font.render(
@@ -600,7 +627,7 @@ while running:
 
     draw()
 
-    # End conditions
+    # End game
     if player["hp"] <= 0:
         running = False
 
