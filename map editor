@@ -1,0 +1,113 @@
+import pygame
+import json
+
+# --- Config ---
+COLS, ROWS = 40, 30       # Grid dimensions
+CELL = 20                 # Pixel size per cell
+WIN_W = COLS * CELL
+WIN_H = ROWS * CELL + 60  # Extra space for buttons
+
+WALL  = 1
+FLOOR = 0
+
+COLOR_WALL  = (60, 60, 60)
+COLOR_FLOOR = (200, 180, 140)
+COLOR_GRID  = (100, 100, 100)
+COLOR_BG    = (30, 30, 30)
+
+# --- Init ---
+pygame.init()
+screen = pygame.display.set_mode((WIN_W, WIN_H))
+pygame.display.set_caption("Dungeon Map Editor")
+clock = pygame.time.Clock()
+font = pygame.font.SysFont(None, 24)
+
+# Start with all walls
+grid = [[WALL for _ in range(COLS)] for _ in range(ROWS)]
+
+current_tile = WALL   # What you're painting
+drawing = False
+
+def draw_grid():
+    for row in range(ROWS):
+        for col in range(COLS):
+            color = COLOR_WALL if grid[row][col] == WALL else COLOR_FLOOR
+            rect = (col * CELL, row * CELL, CELL, CELL)
+            pygame.draw.rect(screen, color, rect)
+            pygame.draw.rect(screen, COLOR_GRID, rect, 1)
+
+def draw_ui():
+    pygame.draw.rect(screen, (50, 50, 50), (0, WIN_H - 60, WIN_W, 60))
+
+    # Brush indicator
+    label = "Brush: WALL" if current_tile == WALL else "Brush: FLOOR"
+    color = COLOR_WALL if current_tile == WALL else COLOR_FLOOR
+    text = font.render(label, True, color)
+    screen.blit(text, (10, WIN_H - 45))
+
+    # Save button
+    pygame.draw.rect(screen, (0, 140, 80), (WIN_W - 120, WIN_H - 50, 100, 35))
+    screen.blit(font.render("SAVE [S]", True, (255, 255, 255)), (WIN_W - 112, WIN_H - 42))
+
+    # Fill button
+    pygame.draw.rect(screen, (80, 80, 200), (WIN_W - 240, WIN_H - 50, 100, 35))
+    screen.blit(font.render("FILL [F]", True, (255, 255, 255)), (WIN_W - 232, WIN_H - 42))
+
+    # Instructions
+    screen.blit(font.render("Left: paint | Right: erase | 1=Wall 2=Floor | S=save | F=fill all", True, (180,180,180)), (10, WIN_H - 18))
+
+def save_map(filename="map.json"):
+    with open(filename, "w") as f:
+        json.dump(grid, f)
+    print(f"Map saved to {filename}")
+
+running = True
+while running:
+    screen.fill(COLOR_BG)
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_1:
+                current_tile = WALL
+            elif event.key == pygame.K_2:
+                current_tile = FLOOR
+            elif event.key == pygame.K_s:
+                save_map()
+            elif event.key == pygame.K_f:
+                # Fill entire grid with current tile
+                for r in range(ROWS):
+                    for c in range(COLS):
+                        grid[r][c] = current_tile
+
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            drawing = True
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            drawing = False
+
+            # Check Save button click
+            mx, my = event.pos
+            if WIN_W - 120 <= mx <= WIN_W - 20 and WIN_H - 50 <= my <= WIN_H - 15:
+                save_map()
+
+    # Painting while held down
+    if drawing:
+        mx, my = pygame.mouse.get_pos()
+        if my < ROWS * CELL:  # Only paint in grid area
+            col = mx // CELL
+            row = my // CELL
+            if 0 <= col < COLS and 0 <= row < ROWS:
+                if pygame.mouse.get_pressed()[0]:   # Left = paint current tile
+                    grid[row][col] = current_tile
+                elif pygame.mouse.get_pressed()[2]: # Right = erase to floor
+                    grid[row][col] = FLOOR
+
+    draw_grid()
+    draw_ui()
+    pygame.display.flip()
+    clock.tick(60)
+
+pygame.quit()
